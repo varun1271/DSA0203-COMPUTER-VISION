@@ -146,7 +146,7 @@ def create_synthetic_license_plate_frame(width=640, height=480, plate_str="CA 87
 
 class SyntheticCamera:
     """Fallback camera class when physical webcam is not available."""
-    def __init__(self, mode="face", max_frames=250):
+    def __init__(self, mode="face", max_frames=float('inf')):
         self.mode = mode
         self.frame_count = 0
         self.max_frames = max_frames
@@ -170,26 +170,41 @@ class SyntheticCamera:
         else:
             frame = create_synthetic_face_frame(self.width, self.height, self.frame_count)
             
-        time.sleep(0.02)
+        time.sleep(0.03)
         return True, frame
 
     def release(self):
         pass
 
-def get_camera_or_fallback(camera_idx=0, mode="face", force_demo=False, max_demo_frames=250):
-    """Attempts to open physical webcam silently (using DirectShow on Windows), falling back to SyntheticCamera."""
+def get_camera_or_fallback(camera_idx=0, mode="face", force_demo=False, max_demo_frames=None):
+    """Attempts to open physical webcam silently across available device indices, falling back to SyntheticCamera."""
     if force_demo:
-        print(f"[INFO] Running in Demo mode with Synthetic Camera ({mode}).")
-        return SyntheticCamera(mode=mode, max_frames=max_demo_frames), True
+        demo_frames = max_demo_frames if max_demo_frames is not None else 250
+        print(f"[INFO] Running in Synthetic Demo Mode ({mode}).")
+        return SyntheticCamera(mode=mode, max_frames=demo_frames), True
 
-    # Use cv2.CAP_DSHOW on Windows for fast, silent webcam initialization without MSMF warnings
-    cap = cv2.VideoCapture(camera_idx, cv2.CAP_DSHOW if os.name == 'nt' else cv2.CAP_ANY)
-    if cap.isOpened():
-        ret, frame = cap.read()
-        if ret and frame is not None:
-            print("[INFO] Physical webcam initialized successfully.")
-            return cap, False
-        cap.release()
+    # Try camera indices (0, 1, 2)
+    camera_indices = [camera_idx] + [i for i in [0, 1, 2] if i != camera_idx]
+    
+    for idx in camera_indices:
+        # Try both DSHOW and default API backends on Windows
+        backends = [cv2.CAP_DSHOW, cv2.CAP_ANY] if os.name == 'nt' else [cv2.CAP_ANY]
+        for backend in backends:
+            try:
+                cap = cv2.VideoCapture(idx, backend)
+                if cap.isOpened():
+                    # Warm up camera sensor with up to 5 frame reads
+                    for _ in range(5):
+                        ret, frame = cap.read()
+                        if ret and frame is not None and frame.size > 0:
+                            print(f"[INFO] Real physical camera initialized successfully (Device Index {idx}).")
+                            return cap, False
+                        time.sleep(0.05)
+                    cap.release()
+            except Exception:
+                pass
 
-    print(f"[WARNING] Physical camera (index {camera_idx}) unavailable. Falling back to High-Tech Synthetic Camera.")
-    return SyntheticCamera(mode=mode, max_frames=max_demo_frames), True
+    print(f"[NOTICE] No physical webcam detected. Operating in High-Tech Real-Time Camera Simulation ({mode}).")
+    fallback_frames = max_demo_frames if max_demo_frames is not None else float('inf')
+    return SyntheticCamera(mode=mode, max_frames=fallback_frames), True
+
